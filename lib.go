@@ -7,12 +7,12 @@ import (
 )
 
 type (
-	// Database interface a represents an entry point for the context
+	// Database interface represents an entry point for the context
 	Database interface {
 		Context(ctx context.Context) Context
 	}
 
-	// Executor provides an abstraction of *sql.DB and *sql.Tx
+	// Executor provides an abstraction for sql.DB and sql.Tx
 	Executor interface {
 		Exec(query string, args ...interface{}) (sql.Result, error)
 		Query(query string, args ...interface{}) (*sql.Rows, error)
@@ -34,11 +34,12 @@ type (
 		Executor() Executor
 
 		// Begin executes a given operation within a transaction.
-		// If the context was given a transaction, the transaction will be used, otherwise new will be created.
+		// If the context was given a transaction, the transaction will be used, otherwise new one will be created.
 		Begin(operation Operation) error
 
 		// Begin executes a given operation within a transaction with passed transaction options.
-		// If the context was given a transaction, the transaction will be used and the options will be ignored, otherwise new will be created.
+		// If the context was given a transaction, the transaction will be used and the options will be ignored,
+		// otherwise new one will be created.
 		BeginWith(operation Operation, opts *sql.TxOptions) error
 	}
 
