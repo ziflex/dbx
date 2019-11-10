@@ -3,12 +3,21 @@ package dbcontext
 import (
 	"context"
 	"database/sql"
-	"time"
 )
 
 type (
+	// Receiver is a context receiver
+	Receiver func(ctx Context) error
+
 	// Database interface represents an entry point for the context
 	Database interface {
+		// Transaction begins a transaction, creates a context and passes the context to a given receiver
+		Transaction(ctx context.Context, receiver Receiver) error
+
+		// Transaction begins a transaction with a given options, creates a context and passes the context to a given receiver
+		TransactionWith(ctx context.Context, receiver Receiver, opts *sql.TxOptions) error
+
+		// Context creates a new context
 		Context(ctx context.Context) Context
 	}
 
@@ -42,84 +51,4 @@ type (
 		// otherwise new one will be created.
 		BeginWith(operation Operation, opts *sql.TxOptions) error
 	}
-
-	dbContext struct {
-		parent context.Context
-		db     *sql.DB
-		tx     *sql.Tx
-	}
 )
-
-// New returns a new context with a given DB
-func New(parent context.Context, db *sql.DB) Context {
-	return &dbContext{
-		parent: parent,
-		db:     db,
-	}
-}
-
-// WithTx returns a new context with a given TX
-func WithTx(parent context.Context, tx *sql.Tx) Context {
-	return &dbContext{
-		parent: parent,
-		tx:     tx,
-	}
-}
-
-func (c *dbContext) Deadline() (deadline time.Time, ok bool) {
-	return c.parent.Deadline()
-}
-
-func (c *dbContext) Done() <-chan struct{} {
-	return c.parent.Done()
-}
-
-func (c *dbContext) Err() error {
-	return c.parent.Err()
-}
-
-func (c *dbContext) Value(key interface{}) interface{} {
-	return c.parent.Value(key)
-}
-
-func (c *dbContext) Executor() Executor {
-	if c.tx == nil {
-		return c.db
-	}
-
-	return c.tx
-}
-
-func (c *dbContext) Begin(handler Operation) error {
-	return c.BeginWith(handler, nil)
-}
-
-func (c *dbContext) BeginWith(handler Operation, opts *sql.TxOptions) error {
-	var err error
-	tx := c.tx
-	complete := c.tx == nil
-
-	if tx == nil {
-		tx, err = c.db.BeginTx(c, opts)
-
-		if err != nil {
-			return err
-		}
-	}
-
-	err = handler(tx)
-
-	if err != nil {
-		if complete {
-			tx.Rollback()
-		}
-
-		return err
-	}
-
-	if complete {
-		return tx.Commit()
-	}
-
-	return nil
-}
