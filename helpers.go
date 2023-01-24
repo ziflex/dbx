@@ -2,6 +2,7 @@ package dbx
 
 import (
 	"context"
+	"database/sql"
 )
 
 type ctxKey struct{}
@@ -32,4 +33,32 @@ func As(ctx context.Context) (Context, bool) {
 	c, ok := ctx.(Context)
 
 	return c, ok
+}
+
+// Transaction begins a transaction, creates a context and passes the context to a given receiver
+func Transaction[T any](ctx context.Context, db Database, op Operation[T]) (T, error) {
+	return TransactionWith(ctx, db, op, nil)
+}
+
+// TransactionWith begins a transaction with a given options, creates a context and passes the context to a given receiver
+func TransactionWith[T any](ctx context.Context, db Database, op Operation[T], opts *sql.TxOptions) (T, error) {
+	tx, err := db.BeginTx(ctx, opts)
+
+	if err != nil {
+		return *new(T), err
+	}
+
+	out, err := op(WithTx(ctx, tx))
+
+	if err != nil {
+		tx.Rollback()
+
+		return *new(T), err
+	}
+
+	if e := tx.Commit(); e != nil {
+		return *new(T), e
+	}
+
+	return out, nil
 }
