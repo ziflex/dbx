@@ -1,6 +1,8 @@
 package dbx
 
-import "context"
+import (
+	"context"
+)
 
 type ctxKey struct{}
 

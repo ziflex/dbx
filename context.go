@@ -51,37 +51,3 @@ func (c *DefaultContext) Executor() Executor {
 
 	return c.tx
 }
-
-func (c *DefaultContext) Begin(handler Operation) error {
-	return c.BeginWith(handler, nil)
-}
-
-func (c *DefaultContext) BeginWith(handler Operation, opts *sql.TxOptions) error {
-	var err error
-	tx := c.tx
-	complete := c.tx == nil
-
-	if tx == nil {
-		tx, err = c.db.BeginTx(c, opts)
-
-		if err != nil {
-			return err
-		}
-	}
-
-	err = handler(tx)
-
-	if err != nil {
-		if complete {
-			tx.Rollback()
-		}
-
-		return err
-	}
-
-	if complete {
-		return tx.Commit()
-	}
-
-	return nil
-}
