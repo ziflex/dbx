@@ -1,4 +1,4 @@
-package dbcontext
+package dbx
 
 import (
 	"context"
@@ -14,10 +14,10 @@ type (
 		// Transaction begins a transaction, creates a context and passes the context to a given receiver
 		Transaction(ctx context.Context, receiver Receiver) error
 
-		// Transaction begins a transaction with a given options, creates a context and passes the context to a given receiver
+		// TransactionWith begins a transaction with a given options, creates a context and passes the context to a given receiver
 		TransactionWith(ctx context.Context, receiver Receiver, opts *sql.TxOptions) error
 
-		// Context creates a new context
+		// Context creates a new db context
 		Context(ctx context.Context) Context
 	}
 
@@ -38,7 +38,7 @@ type (
 	Context interface {
 		context.Context
 
-		// Returns an sql executor.
+		// Executor returns a sql executor.
 		// If transaction provided, sql.Tx will be returned, otherwise sql.DB.
 		Executor() Executor
 
@@ -46,7 +46,7 @@ type (
 		// If the context was given a transaction, the transaction will be used, otherwise new one will be created.
 		Begin(operation Operation) error
 
-		// Begin executes a given operation within a transaction with passed transaction options.
+		// BeginWith executes a given operation within a transaction with passed transaction options.
 		// If the context was given a transaction, the transaction will be used and the options will be ignored,
 		// otherwise new one will be created.
 		BeginWith(operation Operation, opts *sql.TxOptions) error

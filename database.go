@@ -1,4 +1,4 @@
-package dbcontext
+package dbx
 
 import (
 	"context"
