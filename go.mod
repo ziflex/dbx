@@ -1,3 +1,3 @@
-module github.com/ziflex/go-dbcontext
+module github.com/ziflex/dbx
 
 go 1.19
