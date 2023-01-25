@@ -12,16 +12,39 @@ type DefaultContext struct {
 	tx     *sql.Tx
 }
 
-// New returns a new context with a given DB
-func New(parent context.Context, db *sql.DB) Context {
+// With returns a new context with a given DB context.
+func With(ctx context.Context, dbCtx Context) context.Context {
+	return context.WithValue(ctx, ctxKey{}, dbCtx)
+}
+
+// From returns a DB context from a given context.
+func From(ctx context.Context) Context {
+	if dbCtx, ok := ctx.Value(ctxKey{}).(Context); ok {
+		return dbCtx
+	}
+
+	return nil
+}
+
+// FromOrNew returns a DB context from a given context or creates a new one.
+func FromOrNew(ctx context.Context, db Database) Context {
+	if dbCtx, ok := ctx.Value(ctxKey{}).(Context); ok {
+		return dbCtx
+	}
+
+	return db.Context(ctx)
+}
+
+// FromDB returns a new context with a given DB
+func FromDB(parent context.Context, db *sql.DB) Context {
 	return &DefaultContext{
 		parent: parent,
 		db:     db,
 	}
 }
 
-// WithTx returns a new context with a given TX
-func WithTx(parent context.Context, tx *sql.Tx) Context {
+// FromTx returns a new context with a given TX
+func FromTx(parent context.Context, tx *sql.Tx) Context {
 	return &DefaultContext{
 		parent: parent,
 		tx:     tx,

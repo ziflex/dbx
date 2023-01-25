@@ -7,20 +7,6 @@ import (
 
 type ctxKey struct{}
 
-// With returns a new context with a given DB context.
-func With(ctx context.Context, dbCtx Context) context.Context {
-	return context.WithValue(ctx, ctxKey{}, dbCtx)
-}
-
-// From returns a DB context from a given context.
-func From(ctx context.Context) Context {
-	if dbCtx, ok := ctx.Value(ctxKey{}).(Context); ok {
-		return dbCtx
-	}
-
-	return nil
-}
-
 // Is returns true if the context is a DB context.
 func Is(ctx context.Context) bool {
 	_, ok := ctx.(Context)
@@ -36,19 +22,37 @@ func As(ctx context.Context) (Context, bool) {
 }
 
 // Transaction begins a transaction, creates a context and passes the context to a given receiver
-func Transaction[T any](ctx context.Context, db Database, op Operation[T]) (T, error) {
-	return TransactionWith(ctx, db, op, nil)
+func Transaction(ctx context.Context, db Database, op Operation, opts ...Option) error {
+	_, err := transactionWithInternal(ctx, db, func(ctx Context) (interface{}, error) {
+		return nil, op(ctx)
+	}, opts)
+
+	return err
 }
 
 // TransactionWith begins a transaction with a given options, creates a context and passes the context to a given receiver
-func TransactionWith[T any](ctx context.Context, db Database, op Operation[T], opts *sql.TxOptions) (T, error) {
+func TransactionWith[T any](ctx context.Context, db Database, op OperationWithResult[T], setters ...Option) (T, error) {
+	return transactionWithInternal(ctx, db, op, setters)
+}
+
+func transactionWithInternal[T any](ctx context.Context, db Database, op OperationWithResult[T], setters []Option) (T, error) {
+	var opts *sql.TxOptions
+
+	if len(setters) > 0 {
+		opts = new(sql.TxOptions)
+
+		for _, setter := range setters {
+			setter(opts)
+		}
+	}
+
 	tx, err := db.BeginTx(ctx, opts)
 
 	if err != nil {
 		return *new(T), err
 	}
 
-	out, err := op(WithTx(ctx, tx))
+	out, err := op(FromTx(ctx, tx))
 
 	if err != nil {
 		tx.Rollback()

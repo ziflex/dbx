@@ -22,5 +22,5 @@ func (d *DefaultDatabase) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sq
 }
 
 func (d *DefaultDatabase) Context(ctx context.Context) Context {
-	return New(ctx, d.db)
+	return FromDB(ctx, d.db)
 }

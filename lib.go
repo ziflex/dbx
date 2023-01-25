@@ -37,7 +37,10 @@ type (
 	}
 
 	// Operation is a user-defined database operation that needs to be performed within a transaction
-	Operation[T any] func(ctx Context) (T, error)
+	Operation func(ctx Context) error
+
+	// OperationWithResult is a user-defined database operation that needs to be performed within a transaction and returns a result.
+	OperationWithResult[T any] func(ctx Context) (T, error)
 
 	// Database interface represents an entry point for the context
 	Database interface {
