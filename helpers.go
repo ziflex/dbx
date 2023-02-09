@@ -5,25 +5,10 @@ import (
 	"database/sql"
 )
 
-type ctxKey struct{}
-
-// Is returns true if the context is a DB context.
-func Is(ctx context.Context) bool {
-	_, ok := ctx.(Context)
-
-	return ok
-}
-
-// As returns a DB context if the context is a DB context.
-func As(ctx context.Context) (Context, bool) {
-	c, ok := ctx.(Context)
-
-	return c, ok
-}
-
-// Transaction begins a transaction, creates a context and passes the context to a given receiver
+// Transaction begins or reuses a transaction, passes the context to a given receiver and handles the commit or rollback.
+// Note: if the context is a transaction context, the transaction will be reused.
 func Transaction(ctx context.Context, db Database, op Operation, opts ...Option) error {
-	_, err := transactionWithInternal(ctx, db, func(ctx Context) (interface{}, error) {
+	_, err := transactionWithInternal(FromOrNew(ctx, db), func(ctx Context) (interface{}, error) {
 		return nil, op(ctx)
 	}, opts)
 
@@ -32,21 +17,36 @@ func Transaction(ctx context.Context, db Database, op Operation, opts ...Option)
 
 // TransactionWith begins a transaction with a given options, creates a context and passes the context to a given receiver
 func TransactionWith[T any](ctx context.Context, db Database, op OperationWithResult[T], setters ...Option) (T, error) {
-	return transactionWithInternal(ctx, db, op, setters)
+	return transactionWithInternal(FromOrNew(ctx, db), op, setters)
 }
 
-func transactionWithInternal[T any](ctx context.Context, db Database, op OperationWithResult[T], setters []Option) (T, error) {
-	var opts *sql.TxOptions
+func transactionWithInternal[T any](ctx Context, op OperationWithResult[T], setters []Option) (T, error) {
+	dbCtx, ok := ctx.(*defaultContext)
 
-	if len(setters) > 0 {
-		opts = new(sql.TxOptions)
-
-		for _, setter := range setters {
-			setter(opts)
-		}
+	if !ok {
+		return *new(T), ErrInvalidContext
 	}
 
-	tx, err := db.BeginTx(ctx, opts)
+	db := dbCtx.db
+	opts := newOptions(setters)
+
+	var tx *sql.Tx
+	var err error
+	var createdTx bool
+
+	if opts.AlwaysCreate {
+		createdTx = true
+
+		tx, err = db.BeginTx(ctx, opts.TxOptions)
+	} else {
+		tx = dbCtx.tx
+
+		if tx == nil {
+			createdTx = true
+
+			tx, err = db.BeginTx(ctx, opts.TxOptions)
+		}
+	}
 
 	if err != nil {
 		return *new(T), err
@@ -55,13 +55,17 @@ func transactionWithInternal[T any](ctx context.Context, db Database, op Operati
 	out, err := op(FromTx(ctx, tx))
 
 	if err != nil {
-		tx.Rollback()
+		if createdTx {
+			tx.Rollback()
+		}
 
 		return *new(T), err
 	}
 
-	if e := tx.Commit(); e != nil {
-		return *new(T), e
+	if createdTx {
+		if e := tx.Commit(); e != nil {
+			return *new(T), e
+		}
 	}
 
 	return out, nil

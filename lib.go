@@ -44,8 +44,9 @@ type (
 
 	// Database interface represents an entry point for the context
 	Database interface {
-		Beginner
 		ContextCreator
+		Beginner
+		Executor
 	}
 
 	// Context provides a general purpose abstraction to communication between domain services and data repositories.
