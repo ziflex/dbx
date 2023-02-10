@@ -36,9 +36,15 @@ func NewContext(parent context.Context, exec Executor) Context {
 	}
 }
 
-// WithContext returns a new context with a given DB context.
-func WithContext(ctx context.Context, dbCtx Context) context.Context {
-	return context.WithValue(ctx, ctxKey{}, dbCtx)
+// NewContextFrom returns a DB context from a given context or creates a new one if an existing one not found in a given context.
+func NewContextFrom(ctx context.Context, creator ContextCreator) Context {
+	found := FromContext(ctx)
+
+	if found != nil {
+		return found
+	}
+
+	return creator.Context(ctx)
 }
 
 // FromContext returns a DB context from a given context.
@@ -54,15 +60,9 @@ func FromContext(ctx context.Context) Context {
 	return nil
 }
 
-// FromContextOrNew returns a DB context from a given context or creates a new one.
-func FromContextOrNew(ctx context.Context, db ContextCreator) Context {
-	found := FromContext(ctx)
-
-	if found != nil {
-		return found
-	}
-
-	return db.Context(ctx)
+// WithContext returns a new context with a given DB context.
+func WithContext(ctx context.Context, dbCtx Context) context.Context {
+	return context.WithValue(ctx, ctxKey{}, dbCtx)
 }
 
 func (c *defaultContext) Deadline() (deadline time.Time, ok bool) {

@@ -14,8 +14,8 @@ func Transaction(ctx context.Context, db Database, op Operation, opts ...Option)
 	return err
 }
 
-// TransactionWith begins a transaction with a given options, creates a context and passes the context to a given receiver
-func TransactionWith[T any](ctx context.Context, db Database, op OperationWithResult[T], setters ...Option) (T, error) {
+// TransactionWithResult begins a transaction with a given options, creates a context and passes the context to a given receiver
+func TransactionWithResult[T any](ctx context.Context, db Database, op OperationWithResult[T], setters ...Option) (T, error) {
 	return transactionWithInternal(ctx, db, op, setters)
 }
 
@@ -27,7 +27,7 @@ func transactionWithInternal[T any](ctx context.Context, db Database, op Operati
 
 	if !opts.AlwaysCreate {
 		// retrieve existing or create a new context
-		dbCtx = FromContextOrNew(ctx, db)
+		dbCtx = NewContextFrom(ctx, db)
 		executor := dbCtx.Executor()
 
 		// check if the executor is a transaction
