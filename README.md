@@ -66,6 +66,76 @@ func main() {
 }
 ```
 
+## Context
+```go
+package main
+
+import (
+    "context"
+    "database/sql"
+    "fmt"
+    "log"
+    
+    _ "github.com/lib/pq"
+    "github.com/ziflex/dbx"
+)
+
+func getUserNames(ctx context.Context) []string {
+    // Get dbx context from the context
+    dbxContext := dbx.FromContext(ctx)
+	
+    if dbxContext == nil {
+        log.Fatal("dbx context is not found")
+    }
+	
+    // Create a new query
+    executor := dbxContext.Executor()
+    
+    // Execute the query
+    rows, err := executor.Query("SELECT name FROM users")
+    
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    // Iterate over the rows
+    var names []string
+    for rows.Next() {
+        var name string
+        if err := rows.Scan(&name); err != nil {
+            log.Fatal(err)
+        }
+        
+        names = append(names, name)
+    }
+    
+    return names
+}
+
+func main() {
+    // Connect to a database
+    db, err := sql.Open("postgres", "postgres://user:password@localhost/dbname?sslmode=disable")
+
+    if err != nil {
+        fmt.Println(err)
+        return
+    }
+
+    // Wrap the *sql.DB object with dbx.NewDatabase
+    dbxDB := dbx.NewDatabase(db)
+    
+    // Create a new context
+    ctx := context.Background()
+    
+    // Add dbx context to the context
+    ctx = dbxDB.Context(ctx)
+    
+    userNames := getUserNames(ctx)
+    
+    fmt.Println(userNames)
+}
+```
+
 ## Transactions
 
 ```go
@@ -94,33 +164,33 @@ func insertUser(ctx dbx.Context, name string) {
 }
 
 func main() {
-	// Connect to a database
-	db, err := sql.Open("postgres", "postgres://user:password@localhost/dbname?sslmode=disable")
+    // Connect to a database
+    db, err := sql.Open("postgres", "postgres://user:password@localhost/dbname?sslmode=disable")
 
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
+    if err != nil {
+        fmt.Println(err)
+        return
+    }
 
-	// Wrap the *sql.DB object with dbx.NewDatabase
-	dbxDB := dbx.NewDatabase(db)
-	
-	err = dbx.Transaction(context.Background(), dbxDB, func(ctx dbx.Context) error {
+    // Wrap the *sql.DB object with dbx.NewDatabase
+    dbxDB := dbx.NewDatabase(db)
+    
+    err = dbx.Transaction(context.Background(), dbxDB, func(ctx dbx.Context) error {
         insertUser(ctx, "John")
         insertUser(ctx, "Doe")
-        
+            
         return nil
     })
-	
-	if err != nil {
-		fmt.Println(err)
+
+    if err != nil {
+        fmt.Println(err)
         return
-	}
+    }
 }
 ```
 
->> Transactions are reusable by default. Using ``dbx.Transaction`` multiple times within the same transaction will not create a new transaction. 
->> To disable this behavior, use ``dbx.WithNewTransaction`` option. 
+> Transactions are reusable by default. Using ``dbx.Transaction`` multiple times within the same transaction will not create a new transaction. 
+> To disable this behavior, use ``dbx.WithNewTransaction`` option. 
 
 ```go
 package main
@@ -163,18 +233,18 @@ func main() {
     // Connect to a database
     db, err := sql.Open("postgres", "postgres://user:password@localhost/dbname?sslmode=disable")
 
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
+    if err != nil {
+        fmt.Println(err)
+        return
+    }
 
-	// Wrap the *sql.DB object with dbx.NewDatabase
-	dbxDB := dbx.NewDatabase(db)
+    // Wrap the *sql.DB object with dbx.NewDatabase
+    dbxDB := dbx.NewDatabase(db)
 	
-	err = dbx.Transaction(context.Background(), dbxDB, func(ctx dbx.Context) error {
+    err = dbx.Transaction(context.Background(), dbxDB, func(ctx dbx.Context) error {
         insertUser(ctx, "John")
         insertUser(ctx, "Doe")
-        
+    
         return dbx.Transaction(ctx, dbxDB, func(ctx dbx.Context) error {
             insertCompany(ctx, "Google")
             insertCompany(ctx, "Apple")
@@ -183,9 +253,9 @@ func main() {
         }, dbx.WithNewTransaction())
     })
 	
-	if err != nil {
-		fmt.Println(err)
+    if err != nil {
+        fmt.Println(err)
         return
-	}
+    }
 }
 ```
