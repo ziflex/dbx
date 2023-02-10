@@ -37,8 +37,8 @@ func WithReadOnly(readOnly bool) Option {
 	}
 }
 
-// WithNew creates a new transaction even if there is an existing transaction in the context.
-func WithNew() Option {
+// WithNewTransaction creates a new transaction even if there is an existing transaction in the context.
+func WithNewTransaction() Option {
 	return func(opts *options) {
 		opts.AlwaysCreate = true
 	}
