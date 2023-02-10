@@ -30,9 +30,9 @@ type (
 		BeginTx(context.Context, *sql.TxOptions) (*sql.Tx, error)
 	}
 
-	// ContextCreator provides a db context creation.
+	// ContextCreator provides an executor context creation.
 	ContextCreator interface {
-		// Context creates a new db context
+		// Context creates a new executor context
 		Context(ctx context.Context) Context
 	}
 

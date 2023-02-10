@@ -14,7 +14,7 @@ func NewDatabase(db *sql.DB) Database {
 }
 
 func (d *defaultDatabase) Context(ctx context.Context) Context {
-	return FromDB(ctx, d.db)
+	return NewContext(ctx, d)
 }
 
 func (d *defaultDatabase) Begin() (*sql.Tx, error) {
