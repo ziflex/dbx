@@ -9,7 +9,7 @@ type defaultDatabase struct {
 	db *sql.DB
 }
 
-func NewDatabase(db *sql.DB) Database {
+func New(db *sql.DB) Database {
 	return &defaultDatabase{db}
 }
 

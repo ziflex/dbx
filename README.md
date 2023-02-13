@@ -58,7 +58,7 @@ func main() {
 	}
 
 	// Wrap the *sql.DB object with dbx.NewDatabase
-	dbxDB := dbx.NewDatabase(db)
+	dbxDB := dbx.New(db)
 	
 	userNames := getUserNames(dbxDB.Context(context.Background()))
 	
@@ -122,7 +122,7 @@ func main() {
     }
 
     // Wrap the *sql.DB object with dbx.NewDatabase
-    dbxDB := dbx.NewDatabase(db)
+    dbxDB := dbx.New(db)
     
     // Create a new context
     ctx := context.Background()
@@ -173,7 +173,7 @@ func main() {
     }
 
     // Wrap the *sql.DB object with dbx.NewDatabase
-    dbxDB := dbx.NewDatabase(db)
+    dbxDB := dbx.New(db)
     
     err = dbx.Transaction(context.Background(), dbxDB, func(ctx dbx.Context) error {
         insertUser(ctx, "John")
@@ -239,7 +239,7 @@ func main() {
     }
 
     // Wrap the *sql.DB object with dbx.NewDatabase
-    dbxDB := dbx.NewDatabase(db)
+    dbxDB := dbx.New(db)
 	
     err = dbx.Transaction(context.Background(), dbxDB, func(ctx dbx.Context) error {
         insertUser(ctx, "John")

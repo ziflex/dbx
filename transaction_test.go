@@ -17,7 +17,7 @@ func TestTransaction(test *testing.T) {
 
 		ctx := context.Background()
 
-		db := dbx.NewDatabase(dbMock)
+		db := dbx.New(dbMock)
 		dmock.ExpectBegin()
 		dmock.ExpectExec("SELECT 1").WillReturnResult(sqlmock.NewResult(1, 1))
 		dmock.ExpectExec("SELECT 2").WillReturnResult(sqlmock.NewResult(1, 1))
@@ -52,7 +52,7 @@ func TestTransaction(test *testing.T) {
 		ctx := context.Background()
 
 		testErr := errors.New("test error")
-		db := dbx.NewDatabase(dbMock)
+		db := dbx.New(dbMock)
 		dmock.ExpectBegin().WillReturnError(testErr)
 
 		err := dbx.Transaction(ctx, db, func(c dbx.Context) error {
@@ -73,7 +73,7 @@ func TestTransaction(test *testing.T) {
 		ctx := context.Background()
 
 		testErr := errors.New("test error")
-		db := dbx.NewDatabase(dbMock)
+		db := dbx.New(dbMock)
 		dmock.ExpectBegin().WillReturnError(testErr)
 		dmock.ExpectExec("SELECT 1").WillReturnResult(sqlmock.NewResult(1, 1))
 		dmock.ExpectCommit().WillReturnError(testErr)
@@ -96,7 +96,7 @@ func TestTransaction(test *testing.T) {
 		ctx := context.Background()
 
 		testErr := errors.New("test error")
-		db := dbx.NewDatabase(dbMock)
+		db := dbx.New(dbMock)
 		dmock.ExpectBegin()
 		dmock.ExpectExec("SELECT 1").WillReturnResult(sqlmock.NewResult(1, 1))
 		dmock.ExpectExec("SELECT 2").WillReturnResult(sqlmock.NewResult(1, 1))
@@ -122,7 +122,7 @@ func TestTransaction(test *testing.T) {
 
 		ctx := context.Background()
 
-		db := dbx.NewDatabase(dbMock)
+		db := dbx.New(dbMock)
 		dmock.ExpectBegin()
 		dmock.ExpectExec("SELECT 1").WillReturnResult(sqlmock.NewResult(1, 1))
 		dmock.ExpectExec("SELECT 2").WillReturnResult(sqlmock.NewResult(1, 1))
