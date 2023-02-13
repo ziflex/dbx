@@ -8,7 +8,7 @@ import (
 type (
 	ctxKey struct{}
 
-	DefaultContext struct {
+	defaultContext struct {
 		parent   context.Context
 		executor Executor
 	}
@@ -30,7 +30,7 @@ func As(ctx context.Context) (Context, bool) {
 
 // NewContext returns a new context with a given Executor.
 func NewContext(parent context.Context, exec Executor) Context {
-	return &DefaultContext{
+	return &defaultContext{
 		parent:   parent,
 		executor: exec,
 	}
@@ -65,22 +65,22 @@ func WithContext(ctx context.Context, dbCtx Context) context.Context {
 	return context.WithValue(ctx, ctxKey{}, dbCtx)
 }
 
-func (c *DefaultContext) Deadline() (deadline time.Time, ok bool) {
+func (c *defaultContext) Deadline() (deadline time.Time, ok bool) {
 	return c.parent.Deadline()
 }
 
-func (c *DefaultContext) Done() <-chan struct{} {
+func (c *defaultContext) Done() <-chan struct{} {
 	return c.parent.Done()
 }
 
-func (c *DefaultContext) Err() error {
+func (c *defaultContext) Err() error {
 	return c.parent.Err()
 }
 
-func (c *DefaultContext) Value(key interface{}) interface{} {
+func (c *defaultContext) Value(key interface{}) interface{} {
 	return c.parent.Value(key)
 }
 
-func (c *DefaultContext) Executor() Executor {
+func (c *defaultContext) Executor() Executor {
 	return c.executor
 }
