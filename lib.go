@@ -3,6 +3,7 @@ package dbx
 import (
 	"context"
 	"database/sql"
+	"io"
 )
 
 type (
@@ -44,6 +45,7 @@ type (
 
 	// Database interface represents an entry point for the context
 	Database interface {
+		io.Closer
 		ContextCreator
 		Beginner
 		Executor

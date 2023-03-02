@@ -13,6 +13,10 @@ func New(db *sql.DB) Database {
 	return &defaultDatabase{db}
 }
 
+func (d *defaultDatabase) Close() error {
+	return d.db.Close()
+}
+
 func (d *defaultDatabase) Context(ctx context.Context) Context {
 	return NewContext(ctx, d)
 }
