@@ -74,7 +74,7 @@ func TestTransaction(test *testing.T) {
 
 		testErr := errors.New("test error")
 		db := dbx.New(dbMock)
-		dmock.ExpectBegin().WillReturnError(testErr)
+		dmock.ExpectBegin()
 		dmock.ExpectExec("SELECT 1").WillReturnResult(sqlmock.NewResult(1, 1))
 		dmock.ExpectCommit().WillReturnError(testErr)
 
