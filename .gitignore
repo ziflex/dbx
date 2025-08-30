@@ -12,3 +12,6 @@
 *.out
 coverage.out
 .idea/
+
+# Static analysis results
+*.sarif
