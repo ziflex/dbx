@@ -373,7 +373,41 @@ func batchInsertUsers(ctx dbx.Context, users []User) error {
 
 `dbx` works seamlessly with testing frameworks and mocking libraries:
 
+### Using the dbx/testing Module
+
+The `dbx/testing` package provides mock implementations of all dbx interfaces, making unit testing easier:
+
+```go
+import (
+    "github.com/ziflex/dbx"
+    dbxtesting "github.com/ziflex/dbx/testing"
+)
+
+func TestUserService_CreateUser(t *testing.T) {
+    // Create mock database
+    mockDB := dbxtesting.NewMockDatabase()
+    
+    // Set up expectation
+    expectedResult := dbxtesting.NewResult(123, 1)
+    mockDB.On("Exec", "INSERT INTO users (name) VALUES (?)", "John").
+        Return(expectedResult, nil)
+    
+    // Test your service
+    service := NewUserService(mockDB)
+    userID, err := service.CreateUser(context.Background(), "John")
+    
+    // Verify results
+    require.NoError(t, err)
+    assert.Equal(t, int64(123), userID)
+    mockDB.AssertExpectations(t)
+}
+```
+
+See the [testing module documentation](testing/README.md) for comprehensive examples and usage patterns.
+
 ### Using go-sqlmock
+
+For more complex testing scenarios or when you need actual SQL rows, you can use go-sqlmock:
 
 ```go
 func TestGetUserNames(t *testing.T) {
