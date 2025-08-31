@@ -121,6 +121,14 @@ type (
 		Context(ctx context.Context) Context
 	}
 
+	// DatabaseWithContext is an optional interface that databases can implement
+	// to provide context creation capabilities. This is separate from the main
+	// Database interface to maintain compatibility with external packages.
+	DatabaseWithContext interface {
+		Database
+		ContextCreator
+	}
+
 	// Operation represents a user-defined database operation that needs to be
 	// performed within a transaction. Operations receive a dbx Context and
 	// should return an error if the operation fails.
@@ -147,8 +155,8 @@ type (
 	OperationWithResult[T any] func(ctx Context) (T, error)
 
 	// Database interface represents the main entry point for dbx operations.
-	// It combines database connection management, context creation, transaction
-	// initiation, and direct query execution capabilities.
+	// It combines database connection management, transaction initiation, and
+	// direct query execution capabilities.
 	//
 	// Database implementations should wrap sql.DB and provide context-aware
 	// database operations while maintaining compatibility with the standard
@@ -156,9 +164,6 @@ type (
 	Database interface {
 		// Embed io.Closer to allow proper database connection cleanup
 		io.Closer
-
-		// Embed ContextCreator to bootstrap dbx contexts
-		ContextCreator
 
 		// Embed Beginner to support transaction creation
 		Beginner

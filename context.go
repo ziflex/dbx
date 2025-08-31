@@ -90,14 +90,40 @@ func NewContext(parent context.Context, exec Executor) Context {
 	}
 }
 
+// NewDatabaseContext creates a new dbx Context from a Database instance.
+// This is a convenience function that allows creating a context from any Database,
+// regardless of whether it implements ContextCreator or not.
+//
+// Parameters:
+//   - parent: The parent Go context to wrap
+//   - db: The Database instance to use as the executor
+//
+// Returns:
+//   - Context: A new dbx Context with the database as executor
+//
+// Example:
+//
+//	db := dbx.New(sqlDB)
+//	dbCtx := dbx.NewDatabaseContext(context.Background(), db)
+//	result, err := dbCtx.Executor().Exec("INSERT INTO users (name) VALUES (?)", "John")
+func NewDatabaseContext(parent context.Context, db Database) Context {
+	return &defaultContext{
+		parent:   parent,
+		executor: db,
+	}
+}
+
 // NewContextFrom attempts to find an existing dbx Context in the provided context,
-// or creates a new one using the provided ContextCreator if none is found.
+// or creates a new one using the provided creator if none is found.
 // This function is useful for ensuring that a dbx Context is available while
 // avoiding unnecessary Context creation when one already exists.
 //
+// The creator parameter can be either a ContextCreator, a Database, or any type that has
+// a Context(context.Context) Context method.
+//
 // Parameters:
 //   - ctx: The context to search for an existing dbx Context
-//   - creator: ContextCreator to use if no existing Context is found
+//   - creator: Either a ContextCreator, Database, or any type with Context method to use if no existing Context is found
 //
 // Returns:
 //   - Context: Either the existing dbx Context or a newly created one
@@ -107,14 +133,30 @@ func NewContext(parent context.Context, exec Executor) Context {
 //	// This will reuse existing dbx Context or create new one
 //	dbCtx := dbx.NewContextFrom(ctx, database)
 //	executor := dbCtx.Executor()
-func NewContextFrom(ctx context.Context, creator ContextCreator) Context {
+func NewContextFrom(ctx context.Context, creator interface{}) Context {
 	found := FromContext(ctx)
 
 	if found != nil {
 		return found
 	}
 
-	return creator.Context(ctx)
+	// Try ContextCreator interface first
+	if cc, ok := creator.(ContextCreator); ok {
+		return cc.Context(ctx)
+	}
+
+	// Try Database interface 
+	if db, ok := creator.(Database); ok {
+		return NewDatabaseContext(ctx, db)
+	}
+
+	// Try any type with Context method (for backward compatibility)
+	if contextProvider, ok := creator.(interface{ Context(context.Context) Context }); ok {
+		return contextProvider.Context(ctx)
+	}
+
+	// If none work, panic with helpful message
+	panic("creator must implement ContextCreator, Database, or have Context(context.Context) Context method")
 }
 
 // FromContext extracts a dbx Context from the provided Go context.

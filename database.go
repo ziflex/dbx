@@ -17,12 +17,15 @@ type defaultDatabase struct {
 // automatic transaction management while preserving all the functionality
 // of the underlying sql.DB.
 //
+// The returned database also implements ContextCreator, allowing direct
+// context creation via the Context method.
+//
 // Parameters:
 //   - db: A properly initialized sql.DB instance. The caller retains ownership
 //     and responsibility for the sql.DB's configuration and driver setup.
 //
 // Returns:
-//   - Database: A dbx Database that can be used to create contexts and manage transactions.
+//   - DatabaseWithContext: A dbx Database that can create contexts and manage transactions.
 //
 // Example:
 //
@@ -37,7 +40,7 @@ type defaultDatabase struct {
 //
 //	ctx := dbxDB.Context(context.Background())
 //	rows, err := ctx.Executor().Query("SELECT * FROM users")
-func New(db *sql.DB) Database {
+func New(db *sql.DB) DatabaseWithContext {
 	return &defaultDatabase{db}
 }
 
