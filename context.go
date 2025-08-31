@@ -123,7 +123,7 @@ func NewDatabaseContext(parent context.Context, db Database) Context {
 //
 // Parameters:
 //   - ctx: The context to search for an existing dbx Context
-//   - creator: Either a ContextCreator, Database, or any type with Context method to use if no existing Context is found
+//   - creator: Either a ContextCreator, Database, or Transactor
 //
 // Returns:
 //   - Context: Either the existing dbx Context or a newly created one
@@ -133,30 +133,24 @@ func NewDatabaseContext(parent context.Context, db Database) Context {
 //	// This will reuse existing dbx Context or create new one
 //	dbCtx := dbx.NewContextFrom(ctx, database)
 //	executor := dbCtx.Executor()
-func NewContextFrom(ctx context.Context, creator interface{}) Context {
+func NewContextFrom(ctx context.Context, input any) Context {
 	found := FromContext(ctx)
 
 	if found != nil {
 		return found
 	}
 
-	// Try ContextCreator interface first
-	if cc, ok := creator.(ContextCreator); ok {
-		return cc.Context(ctx)
+	switch val := input.(type) {
+	case ContextCreator:
+		return val.Context(ctx)
+	case Database:
+		return NewDatabaseContext(ctx, val)
+	case Transactor:
+		return NewContext(ctx, val)
+	default:
+		// If none work, panic with helpful message
+		panic("input must implement ContextCreator, Database, or Transactor")
 	}
-
-	// Try Database interface 
-	if db, ok := creator.(Database); ok {
-		return NewDatabaseContext(ctx, db)
-	}
-
-	// Try any type with Context method (for backward compatibility)
-	if contextProvider, ok := creator.(interface{ Context(context.Context) Context }); ok {
-		return contextProvider.Context(ctx)
-	}
-
-	// If none work, panic with helpful message
-	panic("creator must implement ContextCreator, Database, or have Context(context.Context) Context method")
 }
 
 // FromContext extracts a dbx Context from the provided Go context.
