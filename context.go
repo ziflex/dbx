@@ -149,7 +149,7 @@ func NewContextFrom(ctx context.Context, input any) Context {
 		return NewContext(ctx, val)
 	default:
 		// If none work, panic with helpful message
-		panic("creator must implement ContextCreator, Database, or Transactor")
+		panic("input must implement ContextCreator, Database, or Transactor")
 	}
 }
 
