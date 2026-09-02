@@ -2,169 +2,180 @@ package dbx_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/ziflex/dbx"
 )
 
-func TestTransaction(test *testing.T) {
-	test.Run("should handle single transaction", func(t *testing.T) {
-		dbMock, dmock, _ := sqlmock.New()
-		defer dbMock.Close()
+func TestTransaction(t *testing.T) {
+	t.Run("commits a successful transaction", func(t *testing.T) {
+		database, mock := newSQLMock(t)
+		db := dbx.New(database)
 
-		ctx := context.Background()
+		mock.ExpectBegin()
+		mock.ExpectExec("SELECT 1").WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectCommit()
 
-		db := dbx.New(dbMock)
-		dmock.ExpectBegin()
-		dmock.ExpectExec("SELECT 1").WillReturnResult(sqlmock.NewResult(1, 1))
-		dmock.ExpectExec("SELECT 2").WillReturnResult(sqlmock.NewResult(1, 1))
-		dmock.ExpectExec("SELECT 3").WillReturnResult(sqlmock.NewResult(1, 1))
-		dmock.ExpectCommit()
+		err := dbx.Transaction(context.Background(), db, func(ctx dbx.Context) error {
+			_, err := ctx.Executor().Exec("SELECT 1")
 
-		err := dbx.Transaction(ctx, db, func(c dbx.Context) error {
-			executor := c.Executor()
+			return err
+		})
 
-			if _, e := executor.Exec("SELECT 1"); e != nil {
-				return e
-			}
+		require.NoError(t, err)
+	})
 
-			if _, e := executor.Exec("SELECT 2"); e != nil {
-				return e
-			}
+	t.Run("accepts a minimal Beginner implementation", func(t *testing.T) {
+		database, mock := newSQLMock(t)
+		beginner := &beginnerOnly{db: database}
 
-			if _, e := executor.Exec("SELECT 3"); e != nil {
-				return e
-			}
+		mock.ExpectBegin()
+		mock.ExpectExec("SELECT 1").WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectCommit()
+
+		err := dbx.Transaction(context.Background(), beginner, func(ctx dbx.Context) error {
+			_, err := ctx.Executor().Exec("SELECT 1")
+
+			return err
+		})
+
+		require.NoError(t, err)
+		assert.Zero(t, beginner.beginCalls)
+		assert.Equal(t, 1, beginner.beginTxCalls)
+	})
+
+	t.Run("returns a begin error without running the operation", func(t *testing.T) {
+		database, mock := newSQLMock(t)
+		db := dbx.New(database)
+		beginErr := errors.New("begin transaction")
+		operationCalled := false
+
+		mock.ExpectBegin().WillReturnError(beginErr)
+
+		err := dbx.Transaction(context.Background(), db, func(dbx.Context) error {
+			operationCalled = true
 
 			return nil
 		})
 
-		assert.NoError(t, err)
+		require.ErrorIs(t, err, beginErr)
+		assert.False(t, operationCalled)
 	})
 
-	test.Run("should handle tx begin errors", func(t *testing.T) {
-		dbMock, dmock, _ := sqlmock.New()
-		defer dbMock.Close()
+	t.Run("returns a commit error", func(t *testing.T) {
+		database, mock := newSQLMock(t)
+		db := dbx.New(database)
+		commitErr := errors.New("commit transaction")
 
-		ctx := context.Background()
+		mock.ExpectBegin()
+		mock.ExpectExec("SELECT 1").WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectCommit().WillReturnError(commitErr)
 
-		testErr := errors.New("test error")
-		db := dbx.New(dbMock)
-		dmock.ExpectBegin().WillReturnError(testErr)
+		err := dbx.Transaction(context.Background(), db, func(ctx dbx.Context) error {
+			_, err := ctx.Executor().Exec("SELECT 1")
 
-		err := dbx.Transaction(ctx, db, func(c dbx.Context) error {
-			executor := c.Executor()
-			executor.Exec("SELECT 1")
-
-			return nil
+			return err
 		})
 
-		assert.Error(t, err)
-		assert.Equal(t, testErr, err)
+		require.ErrorIs(t, err, commitErr)
 	})
 
-	test.Run("should handle tx commit errors", func(t *testing.T) {
-		dbMock, dmock, _ := sqlmock.New()
-		defer dbMock.Close()
+	t.Run("rolls back on an operation error", func(t *testing.T) {
+		database, mock := newSQLMock(t)
+		db := dbx.New(database)
+		operationErr := errors.New("run operation")
 
-		ctx := context.Background()
+		mock.ExpectBegin()
+		mock.ExpectRollback()
 
-		testErr := errors.New("test error")
-		db := dbx.New(dbMock)
-		dmock.ExpectBegin()
-		dmock.ExpectExec("SELECT 1").WillReturnResult(sqlmock.NewResult(1, 1))
-		dmock.ExpectCommit().WillReturnError(testErr)
-
-		err := dbx.Transaction(ctx, db, func(c dbx.Context) error {
-			executor := c.Executor()
-			executor.Exec("SELECT 1")
-
-			return nil
+		err := dbx.Transaction(context.Background(), db, func(dbx.Context) error {
+			return operationErr
 		})
 
-		assert.Error(t, err)
-		assert.Equal(t, testErr, err)
+		require.ErrorIs(t, err, operationErr)
+		assert.Equal(t, operationErr, err)
 	})
 
-	test.Run("should handle single transaction and rollback on errors", func(t *testing.T) {
-		dbMock, dmock, _ := sqlmock.New()
-		defer dbMock.Close()
+	t.Run("joins operation and rollback errors", func(t *testing.T) {
+		database, mock := newSQLMock(t)
+		db := dbx.New(database)
+		operationErr := errors.New("run operation")
+		rollbackErr := errors.New("rollback transaction")
 
-		ctx := context.Background()
+		mock.ExpectBegin()
+		mock.ExpectRollback().WillReturnError(rollbackErr)
 
-		testErr := errors.New("test error")
-		db := dbx.New(dbMock)
-		dmock.ExpectBegin()
-		dmock.ExpectExec("SELECT 1").WillReturnResult(sqlmock.NewResult(1, 1))
-		dmock.ExpectExec("SELECT 2").WillReturnResult(sqlmock.NewResult(1, 1))
-		dmock.ExpectExec("SELECT 3").WillReturnResult(sqlmock.NewResult(1, 1))
-		dmock.ExpectRollback()
-
-		err := dbx.Transaction(ctx, db, func(c dbx.Context) error {
-			executor := c.Executor()
-			executor.Exec("SELECT 1")
-			executor.Exec("SELECT 2")
-			executor.Exec("SELECT 3")
-
-			return testErr
+		err := dbx.Transaction(context.Background(), db, func(dbx.Context) error {
+			return operationErr
 		})
 
-		assert.Error(t, err)
-		assert.Equal(t, testErr, err)
+		require.ErrorIs(t, err, operationErr)
+		require.ErrorIs(t, err, rollbackErr)
 	})
 
-	test.Run("should reuse nested transaction", func(t *testing.T) {
-		dbMock, dmock, _ := sqlmock.New()
-		defer dbMock.Close()
+	t.Run("ignores ErrTxDone while returning the operation error", func(t *testing.T) {
+		database, mock := newSQLMock(t)
+		db := dbx.New(database)
+		operationErr := errors.New("run operation")
 
-		ctx := context.Background()
+		mock.ExpectBegin()
+		mock.ExpectRollback().WillReturnError(sql.ErrTxDone)
 
-		db := dbx.New(dbMock)
-		dmock.ExpectBegin()
-		dmock.ExpectExec("SELECT 1").WillReturnResult(sqlmock.NewResult(1, 1))
-		dmock.ExpectExec("SELECT 2").WillReturnResult(sqlmock.NewResult(1, 1))
-		dmock.ExpectExec("SELECT 3").WillReturnResult(sqlmock.NewResult(1, 1))
-		dmock.ExpectExec("SELECT 4").WillReturnResult(sqlmock.NewResult(1, 1))
-		dmock.ExpectExec("SELECT 5").WillReturnResult(sqlmock.NewResult(1, 1))
-		dmock.ExpectExec("SELECT 6").WillReturnResult(sqlmock.NewResult(1, 1))
-		dmock.ExpectCommit()
+		err := dbx.Transaction(context.Background(), db, func(dbx.Context) error {
+			return operationErr
+		})
 
-		err := dbx.Transaction(ctx, db, func(c1 dbx.Context) error {
-			executor := c1.Executor()
-			executor.Exec("SELECT 1")
-			executor.Exec("SELECT 2")
-			executor.Exec("SELECT 3")
+		require.ErrorIs(t, err, operationErr)
+		assert.Equal(t, operationErr, err)
+		assert.NotErrorIs(t, err, sql.ErrTxDone)
+	})
 
-			return dbx.Transaction(c1, db, func(c2 dbx.Context) error {
-				executor2 := c2.Executor()
-				executor2.Exec("SELECT 4")
+	t.Run("rolls back and preserves a panic", func(t *testing.T) {
+		database, mock := newSQLMock(t)
+		db := dbx.New(database)
 
-				assert.Equal(t, c1, c2)
-				assert.Equal(t, executor, executor2)
+		mock.ExpectBegin()
+		mock.ExpectRollback()
 
-				return dbx.Transaction(c2, db, func(c3 dbx.Context) error {
-					executor3 := c3.Executor()
-					executor3.Exec("SELECT 5")
-
-					assert.Equal(t, c2, c3)
-					assert.Equal(t, executor2, executor3)
-
-					return dbx.Transaction(c3, db, func(c4 dbx.Context) error {
-						executor4 := c4.Executor()
-						executor4.Exec("SELECT 6")
-
-						assert.Equal(t, c3, c4)
-						assert.Equal(t, executor3, executor4)
-
-						return nil
-					})
-				})
+		assert.PanicsWithValue(t, "operation panic", func() {
+			_ = dbx.Transaction(context.Background(), db, func(dbx.Context) error { //nolint:errcheck // The operation must panic before returning.
+				panic("operation panic")
 			})
 		})
+	})
 
-		assert.NoError(t, err)
+	t.Run("reuses an existing transaction", func(t *testing.T) {
+		database, mock := newSQLMock(t)
+		db := dbx.New(database)
+		unusedBeginner := &beginnerOnly{db: database}
+
+		mock.ExpectBegin()
+		mock.ExpectExec("SELECT 1").WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectExec("SELECT 2").WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectCommit()
+
+		err := dbx.Transaction(context.Background(), db, func(outer dbx.Context) error {
+			if _, err := outer.Executor().Exec("SELECT 1"); err != nil {
+				return err
+			}
+
+			return dbx.Transaction(outer, unusedBeginner, func(inner dbx.Context) error {
+				assert.Same(t, outer, inner)
+				assert.Equal(t, outer.Executor(), inner.Executor())
+
+				_, err := inner.Executor().Exec("SELECT 2")
+
+				return err
+			}, dbx.WithReadOnly(true))
+		})
+
+		require.NoError(t, err)
+		assert.Zero(t, unusedBeginner.beginTxCalls)
 	})
 }

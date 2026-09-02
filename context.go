@@ -82,7 +82,7 @@ func As(ctx context.Context) (Context, bool) {
 //
 //	sqlDB, _ := sql.Open("postgres", connectionString)
 //	dbCtx := dbx.NewContext(context.Background(), sqlDB)
-//	result, err := dbCtx.Executor().Exec("INSERT INTO users (name) VALUES (?)", "John")
+//	result, err := dbCtx.Executor().ExecContext(dbCtx, "INSERT INTO users (name) VALUES (?)", "John")
 func NewContext(parent context.Context, exec Executor) Context {
 	return &defaultContext{
 		parent:   parent,
@@ -105,7 +105,7 @@ func NewContext(parent context.Context, exec Executor) Context {
 //
 //	db := dbx.New(sqlDB)
 //	dbCtx := dbx.NewDatabaseContext(context.Background(), db)
-//	result, err := dbCtx.Executor().Exec("INSERT INTO users (name) VALUES (?)", "John")
+//	result, err := dbCtx.Executor().ExecContext(dbCtx, "INSERT INTO users (name) VALUES (?)", "John")
 func NewDatabaseContext(parent context.Context, db Database) Context {
 	return &defaultContext{
 		parent:   parent,

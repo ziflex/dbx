@@ -2,6 +2,9 @@ package dbx
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 )
 
 // Transaction begins or reuses a transaction, executes the provided operation,
@@ -12,6 +15,8 @@ import (
 //   - If a new transaction is created, it's committed on successful operation or rolled back on error.
 //   - If an existing transaction is reused, commit/rollback is left to the outer transaction.
 //   - Any panic during operation execution triggers rollback if a new transaction was created.
+//   - If an operation and its rollback both fail, the returned error contains both failures.
+//   - Transaction options apply only when a new transaction is created.
 //
 // Parameters:
 //   - ctx: Parent Go context.
@@ -25,9 +30,9 @@ import (
 // Example:
 //
 //	err := dbx.Transaction(ctx, db, func(txCtx dbx.Context) error {
-//	    _, err := txCtx.Executor().Exec("INSERT INTO users (name) VALUES (?)", "John")
+//	    _, err := txCtx.Executor().ExecContext(txCtx, "INSERT INTO users (name) VALUES (?)", "John")
 //	    if err != nil { return err } // triggers automatic rollback
-//	    _, err = txCtx.Executor().Exec("INSERT INTO profiles (user_id) VALUES (?)", userID)
+//	    _, err = txCtx.Executor().ExecContext(txCtx, "INSERT INTO profiles (user_id) VALUES (?)", userID)
 //	    return err
 //	})
 func Transaction(ctx context.Context, beginner Beginner, op Operation, opts ...Option) error {
@@ -54,9 +59,13 @@ func Transaction(ctx context.Context, beginner Beginner, op Operation, opts ...O
 // Example:
 //
 //	userID, err := dbx.TransactionWithResult(ctx, db, func(txCtx dbx.Context) (int64, error) {
-//	    result, err := txCtx.Executor().Exec("INSERT INTO users (name) VALUES (?)", "John")
-//	    if err != nil { return 0, err }
-//	    return result.LastInsertId()
+//	    var userID int64
+//	    err := txCtx.Executor().QueryRowContext(
+//	        txCtx,
+//	        "INSERT INTO users (name) VALUES (?) RETURNING id",
+//	        "John",
+//	    ).Scan(&userID)
+//	    return userID, err
 //	})
 func TransactionWithResult[T any](ctx context.Context, beginner Beginner, op OperationWithResult[T], setters ...Option) (T, error) {
 	return transactionWithInternal(ctx, beginner, op, setters)
@@ -83,22 +92,20 @@ func TransactionWithResult[T any](ctx context.Context, beginner Beginner, op Ope
 //   - T: Operation result (zero value if error).
 //   - error: Any error from transaction handling or op execution.
 func transactionWithInternal[T any](ctx context.Context, beginner Beginner, op OperationWithResult[T], setters []Option) (T, error) {
+	var zero T
 	var tx Transactor
 	var createdTx bool
 	var dbCtx Context
 	opts := newOptions(setters)
 
 	if !opts.AlwaysCreate {
-		// retrieve existing or create a new context
-		dbCtx = NewContextFrom(ctx, beginner)
-		executor := dbCtx.Executor()
-
-		// check if the executor is a transaction
-		transactor, ok := executor.(Transactor)
-
-		// if the executor is a transaction, use it
-		if ok {
-			tx = transactor
+		// Reuse an existing transaction without requiring beginner to provide
+		// unrelated context or execution capabilities.
+		dbCtx = FromContext(ctx)
+		if dbCtx != nil {
+			if transactor, ok := dbCtx.Executor().(Transactor); ok {
+				tx = transactor
+			}
 		}
 	}
 
@@ -110,26 +117,34 @@ func transactionWithInternal[T any](ctx context.Context, beginner Beginner, op O
 		tx, err = beginner.BeginTx(ctx, opts.TxOptions)
 
 		if err != nil {
-			return *new(T), err
+			return zero, err
 		}
 
 		// create a new context with the transaction
 		dbCtx = NewContext(ctx, tx)
+
+		// Rollback is safe after Commit and guarantees cleanup if op panics.
+		defer func() {
+			_ = tx.Rollback() //nolint:errcheck // A panic must retain its original value; operation errors are handled below.
+		}()
 	}
 
 	out, err := op(dbCtx)
 
 	if err != nil {
 		if createdTx {
-			tx.Rollback()
+			rollbackErr := tx.Rollback()
+			if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+				return zero, errors.Join(err, fmt.Errorf("rollback transaction: %w", rollbackErr))
+			}
 		}
 
-		return *new(T), err
+		return zero, err
 	}
 
 	if createdTx {
 		if e := tx.Commit(); e != nil {
-			return *new(T), e
+			return zero, e
 		}
 	}
 
