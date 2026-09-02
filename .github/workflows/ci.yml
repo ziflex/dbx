@@ -63,6 +63,7 @@ jobs:
   vulnerability:
     name: Vulnerability scan
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -71,4 +72,34 @@ jobs:
           cache-dependency-path: go.sum
       - name: Install govulncheck
         run: go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
-      - run: govulncheck ./...
+      - name: Run govulncheck
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if govulncheck ./...; then
+              exit 0
+            else
+              status=$?
+            fi
+
+            if [[ ${status} -eq 3 ]]; then
+              exit "${status}"
+            fi
+
+            if [[ ${status} -ne 1 ]]; then
+              exit "${status}"
+            fi
+
+            if [[ ${attempt} -eq 3 ]]; then
+              exit "${status}"
+            fi
+
+            if [[ ${attempt} -eq 1 ]]; then
+              delay=10
+            else
+              delay=30
+            fi
+
+            echo "::warning::govulncheck failed with an operational error (exit ${status}); retrying in ${delay}s"
+            sleep "${delay}"
+          done
