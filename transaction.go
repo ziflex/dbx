@@ -96,6 +96,7 @@ func transactionWithInternal[T any](ctx context.Context, beginner Beginner, op O
 	var tx Transactor
 	var createdTx bool
 	var dbCtx Context
+	var operationReturned bool
 	opts := newOptions(setters)
 
 	if !opts.AlwaysCreate {
@@ -123,13 +124,17 @@ func transactionWithInternal[T any](ctx context.Context, beginner Beginner, op O
 		// create a new context with the transaction
 		dbCtx = NewContext(ctx, tx)
 
-		// Rollback is safe after Commit and guarantees cleanup if op panics.
+		// Keep rollback armed until op returns so panics are cleaned up without
+		// issuing another rollback after normal lifecycle handling.
 		defer func() {
-			_ = tx.Rollback() //nolint:errcheck // A panic must retain its original value; operation errors are handled below.
+			if !operationReturned {
+				_ = tx.Rollback() //nolint:errcheck // A panic must retain its original value.
+			}
 		}()
 	}
 
 	out, err := op(dbCtx)
+	operationReturned = true
 
 	if err != nil {
 		if createdTx {
