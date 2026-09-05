@@ -105,6 +105,36 @@ func TestTransactionWithResult(t *testing.T) {
 		assert.Zero(t, count)
 	})
 
+	t.Run("returns zero and leaves a reused transaction usable after an operation error", func(t *testing.T) {
+		database, mock := newSQLMock(t)
+		db := dbx.New(database)
+		unusedBeginner := &beginnerOnly{db: database}
+		operationErr := errors.New("nested operation error")
+
+		mock.ExpectBegin()
+		mock.ExpectExec("SELECT 1").WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectCommit()
+
+		err := dbx.Transaction(context.Background(), db, func(outer dbx.Context) error {
+			result, err := dbx.TransactionWithResult(outer, unusedBeginner, func(inner dbx.Context) (string, error) {
+				assert.Same(t, outer, inner)
+
+				return "discarded", operationErr
+			})
+
+			require.ErrorIs(t, err, operationErr)
+			assert.Equal(t, operationErr, err)
+			assert.Empty(t, result)
+
+			_, err = outer.Executor().ExecContext(outer, "SELECT 1")
+
+			return err
+		})
+
+		require.NoError(t, err)
+		assert.Zero(t, unusedBeginner.beginTxCalls)
+	})
+
 	t.Run("supports custom result types", func(t *testing.T) {
 		type user struct {
 			ID   int

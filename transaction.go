@@ -93,64 +93,53 @@ func TransactionWithResult[T any](ctx context.Context, beginner Beginner, op Ope
 //   - error: Any error from transaction handling or op execution.
 func transactionWithInternal[T any](ctx context.Context, beginner Beginner, op OperationWithResult[T], setters []Option) (T, error) {
 	var zero T
-	var tx Transactor
-	var createdTx bool
-	var dbCtx Context
-	var operationReturned bool
 	opts := newOptions(setters)
 
 	if !opts.AlwaysCreate {
 		// Reuse an existing transaction without requiring beginner to provide
 		// unrelated context or execution capabilities.
-		dbCtx = FromContext(ctx)
-		if dbCtx != nil {
-			if transactor, ok := dbCtx.Executor().(Transactor); ok {
-				tx = transactor
+		if dbCtx := FromContext(ctx); dbCtx != nil {
+			if _, ok := dbCtx.Executor().(Transactor); ok {
+				out, err := op(dbCtx)
+				if err != nil {
+					return zero, err
+				}
+
+				return out, nil
 			}
 		}
 	}
 
-	if tx == nil {
-		var err error
-		createdTx = true
-
-		// create a new transaction
-		tx, err = beginner.BeginTx(ctx, opts.TxOptions)
-
-		if err != nil {
-			return zero, err
-		}
-
-		// create a new context with the transaction
-		dbCtx = NewContext(ctx, tx)
-
-		// Keep rollback armed until op returns so panics are cleaned up without
-		// issuing another rollback after normal lifecycle handling.
-		defer func() {
-			if !operationReturned {
-				_ = tx.Rollback() //nolint:errcheck // A panic must retain its original value.
-			}
-		}()
+	tx, err := beginner.BeginTx(ctx, opts.TxOptions)
+	if err != nil {
+		return zero, err
 	}
+
+	dbCtx := NewContext(ctx, tx)
+	var operationReturned bool
+
+	// Keep rollback armed until op returns so panics are cleaned up without
+	// issuing another rollback after normal lifecycle handling.
+	defer func() {
+		if !operationReturned {
+			_ = tx.Rollback() //nolint:errcheck // A panic must retain its original value.
+		}
+	}()
 
 	out, err := op(dbCtx)
 	operationReturned = true
 
 	if err != nil {
-		if createdTx {
-			rollbackErr := tx.Rollback()
-			if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
-				return zero, errors.Join(err, fmt.Errorf("rollback transaction: %w", rollbackErr))
-			}
+		rollbackErr := tx.Rollback()
+		if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			return zero, errors.Join(err, fmt.Errorf("rollback transaction: %w", rollbackErr))
 		}
 
 		return zero, err
 	}
 
-	if createdTx {
-		if e := tx.Commit(); e != nil {
-			return zero, e
-		}
+	if e := tx.Commit(); e != nil {
+		return zero, e
 	}
 
 	return out, nil

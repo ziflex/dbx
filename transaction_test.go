@@ -178,4 +178,31 @@ func TestTransaction(t *testing.T) {
 		require.NoError(t, err)
 		assert.Zero(t, unusedBeginner.beginTxCalls)
 	})
+
+	t.Run("leaves a reused transaction usable after a panic", func(t *testing.T) {
+		database, mock := newSQLMock(t)
+		db := dbx.New(database)
+		unusedBeginner := &beginnerOnly{db: database}
+		panicValue := errors.New("nested operation panic")
+
+		mock.ExpectBegin()
+		mock.ExpectExec("SELECT 1").WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectCommit()
+
+		err := dbx.Transaction(context.Background(), db, func(outer dbx.Context) error {
+			assert.PanicsWithValue(t, panicValue, func() {
+				_ = dbx.Transaction(outer, unusedBeginner, func(inner dbx.Context) error { //nolint:errcheck // The operation must panic before returning.
+					assert.Same(t, outer, inner)
+					panic(panicValue)
+				})
+			})
+
+			_, err := outer.Executor().ExecContext(outer, "SELECT 1")
+
+			return err
+		})
+
+		require.NoError(t, err)
+		assert.Zero(t, unusedBeginner.beginTxCalls)
+	})
 }
