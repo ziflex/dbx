@@ -21,8 +21,8 @@ type defaultDatabase struct {
 // context creation via the Context method.
 //
 // Parameters:
-//   - db: A properly initialized sql.DB instance. The caller retains ownership
-//     and responsibility for the sql.DB's configuration and driver setup.
+//   - db: A properly initialized sql.DB instance. The caller remains responsible
+//     for its configuration and driver setup. Closing the returned wrapper closes db.
 //
 // Returns:
 //   - DatabaseWithContext: A dbx Database that can create contexts and manage transactions.
@@ -33,13 +33,11 @@ type defaultDatabase struct {
 //	if err != nil {
 //	    return err
 //	}
-//	defer sqlDB.Close()
-//
 //	dbxDB := dbx.New(sqlDB)
 //	defer dbxDB.Close()
 //
 //	ctx := dbxDB.Context(context.Background())
-//	rows, err := ctx.Executor().Query("SELECT * FROM users")
+//	rows, err := ctx.Executor().QueryContext(ctx, "SELECT * FROM users")
 func New(db *sql.DB) DatabaseWithContext {
 	return &defaultDatabase{db}
 }
@@ -66,6 +64,8 @@ func (d *defaultDatabase) Context(ctx context.Context) Context {
 
 // Begin starts a transaction with default options.
 // This method delegates to the underlying sql.DB's Begin method.
+//
+//nolint:noctx // Beginner preserves database/sql's legacy Begin API for compatibility.
 func (d *defaultDatabase) Begin() (*sql.Tx, error) {
 	return d.db.Begin()
 }
@@ -91,6 +91,8 @@ func (d *defaultDatabase) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sq
 // Returns:
 //   - sql.Result: Contains information about the query execution (rows affected, last insert ID)
 //   - error: Any error that occurred during query execution
+//
+//nolint:noctx // Executor intentionally preserves database/sql's legacy Exec API.
 func (d *defaultDatabase) Exec(query string, args ...interface{}) (sql.Result, error) {
 	return d.db.Exec(query, args...)
 }
@@ -105,6 +107,8 @@ func (d *defaultDatabase) Exec(query string, args ...interface{}) (sql.Result, e
 // Returns:
 //   - *sql.Rows: Rows returned by the query. Must be closed after use.
 //   - error: Any error that occurred during query execution
+//
+//nolint:noctx // Executor intentionally preserves database/sql's legacy Query API.
 func (d *defaultDatabase) Query(query string, args ...interface{}) (*sql.Rows, error) {
 	return d.db.Query(query, args...)
 }
@@ -119,6 +123,8 @@ func (d *defaultDatabase) Query(query string, args ...interface{}) (*sql.Rows, e
 //
 // Returns:
 //   - *sql.Row: Single row result. Use Scan() to extract values and check for errors.
+//
+//nolint:noctx // Executor intentionally preserves database/sql's legacy QueryRow API.
 func (d *defaultDatabase) QueryRow(query string, args ...interface{}) *sql.Row {
 	return d.db.QueryRow(query, args...)
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"github.com/ziflex/dbx"
 )
 
@@ -91,7 +92,7 @@ func TestDatabase(t *testing.T) {
 		require.NoError(t, err)
 		defer mockDB.Close()
 
-		rows := sqlmock.NewRows([]string{"id", "name"}).
+		rows := sqlmock.NewRows([]string{testIDColumn, testNameColumn}).
 			AddRow(1, "Alice").
 			AddRow(2, "Bob")
 		mock.ExpectQuery("SELECT id, name FROM users").WillReturnRows(rows)
@@ -117,6 +118,7 @@ func TestDatabase(t *testing.T) {
 			assert.NoError(t, err)
 			users = append(users, user)
 		}
+		assert.NoError(t, result.Err())
 
 		assert.Len(t, users, 2)
 		assert.Equal(t, "Alice", users[0].Name)
@@ -129,7 +131,7 @@ func TestDatabase(t *testing.T) {
 		require.NoError(t, err)
 		defer mockDB.Close()
 
-		rows := sqlmock.NewRows([]string{"count"}).AddRow(42)
+		rows := sqlmock.NewRows([]string{testCountColumn}).AddRow(42)
 		mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM users").WillReturnRows(rows)
 
 		db := dbx.New(mockDB)
@@ -170,7 +172,7 @@ func TestDatabase(t *testing.T) {
 		require.NoError(t, err)
 		defer mockDB.Close()
 
-		rows := sqlmock.NewRows([]string{"id", "name"}).AddRow(1, "Alice")
+		rows := sqlmock.NewRows([]string{testIDColumn, testNameColumn}).AddRow(1, "Alice")
 		mock.ExpectQuery("SELECT id, name FROM users WHERE id").
 			WithArgs(1).
 			WillReturnRows(rows)
@@ -188,6 +190,7 @@ func TestDatabase(t *testing.T) {
 		var name string
 		err = result.Scan(&id, &name)
 		assert.NoError(t, err)
+		assert.NoError(t, result.Err())
 		assert.Equal(t, 1, id)
 		assert.Equal(t, "Alice", name)
 
@@ -199,7 +202,7 @@ func TestDatabase(t *testing.T) {
 		require.NoError(t, err)
 		defer mockDB.Close()
 
-		rows := sqlmock.NewRows([]string{"name"}).AddRow("Alice")
+		rows := sqlmock.NewRows([]string{testNameColumn}).AddRow("Alice")
 		mock.ExpectQuery("SELECT name FROM users WHERE id").
 			WithArgs(1).
 			WillReturnRows(rows)

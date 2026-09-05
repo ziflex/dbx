@@ -7,7 +7,7 @@
 //
 // Key Features:
 //   - Context-driven design that embeds database connections within Go contexts
-//   - Automatic transaction lifecycle management with support for nested transactions
+//   - Automatic transaction lifecycle management with reuse for nested operations
 //   - Unified interface that works the same for both direct DB operations and transactions
 //   - Interface-based design for maximum flexibility and testability
 //   - Zero magic - predictable behavior with no hidden surprises
@@ -19,8 +19,6 @@
 //	if err != nil {
 //	    return err
 //	}
-//	defer db.Close()
-//
 //	// Create a dbx database instance
 //	dbxDB := dbx.New(db)
 //	defer dbxDB.Close()
@@ -30,12 +28,12 @@
 //	dbCtx := dbxDB.Context(ctx)
 //
 //	// Execute queries
-//	rows, err := dbCtx.Executor().Query("SELECT * FROM users")
+//	rows, err := dbCtx.Executor().QueryContext(dbCtx, "SELECT * FROM users")
 //
 // Transaction Example:
 //
 //	err := dbx.Transaction(ctx, dbxDB, func(txCtx dbx.Context) error {
-//	    _, err := txCtx.Executor().Exec("INSERT INTO users (name) VALUES (?)", "John")
+//	    _, err := txCtx.Executor().ExecContext(txCtx, "INSERT INTO users (name) VALUES (?)", "John")
 //	    return err
 //	})
 package dbx
@@ -135,7 +133,7 @@ type (
 	//
 	// Example:
 	//	op := func(ctx dbx.Context) error {
-	//		_, err := ctx.Executor().Exec("INSERT INTO users (name) VALUES (?)", "John")
+	//		_, err := ctx.Executor().ExecContext(ctx, "INSERT INTO users (name) VALUES (?)", "John")
 	//		return err
 	//	}
 	Operation func(ctx Context) error
@@ -146,7 +144,7 @@ type (
 	//
 	// Example:
 	//	op := func(ctx dbx.Context) (int64, error) {
-	//		result, err := ctx.Executor().Exec("INSERT INTO users (name) VALUES (?)", "John")
+	//		result, err := ctx.Executor().ExecContext(ctx, "INSERT INTO users (name) VALUES (?)", "John")
 	//		if err != nil {
 	//			return 0, err
 	//		}

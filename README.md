@@ -2,7 +2,7 @@
 
 A lightweight, context-aware abstraction layer for Go's `database/sql` package that simplifies database operations and transaction management.
 
-[![API Documentation](https://godoc.org/github.com/ziflex/dbx?status.svg)](https://godoc.org/github.com/ziflex/dbx)
+[![Go Reference](https://pkg.go.dev/badge/github.com/ziflex/dbx.svg)](https://pkg.go.dev/github.com/ziflex/dbx)
 
 ## Table of Contents
 - [Why dbx?](#why-dbx)
@@ -21,7 +21,7 @@ A lightweight, context-aware abstraction layer for Go's `database/sql` package t
 The standard `database/sql` package is powerful but requires boilerplate code for common patterns. `dbx` addresses several pain points:
 
 - **Context Management**: Eliminates the need to pass both `context.Context` and database connections separately
-- **Transaction Handling**: Automatic transaction lifecycle management with support for nested transactions
+- **Transaction Handling**: Automatic transaction lifecycle management with transaction reuse for nested operations
 - **Unified Interface**: Same API for both direct database operations and transactions
 - **Testing**: Easier to mock and test database operations
 - **Clean Architecture**: Promotes separation of concerns between business logic and data access
@@ -44,14 +44,18 @@ go get github.com/ziflex/dbx@latest
 
 ## Key Concepts
 
-### Database Interface
-The `Database` interface wraps a `*sql.DB` and provides context creation:
+### Database Interfaces
+The `Database` interface provides connection management, transaction creation, and query execution. Context creation is exposed separately by `DatabaseWithContext`:
 ```go
 type Database interface {
     io.Closer
-    ContextCreator  // Creates dbx.Context
-    Beginner       // Begins transactions
-    Executor       // Executes queries directly
+    Beginner // Begins transactions
+    Executor // Executes queries directly
+}
+
+type DatabaseWithContext interface {
+    Database
+    ContextCreator // Creates dbx.Context
 }
 ```
 
@@ -89,8 +93,8 @@ import (
     "database/sql"
     "fmt"
     "log"
-	
-	_ "github.com/lib/pq"
+
+    _ "github.com/lib/pq"
     "github.com/ziflex/dbx"
 )
 
@@ -104,7 +108,7 @@ type User struct {
 func getUserNames(ctx dbx.Context) ([]User, error) {
     executor := ctx.Executor()
     
-    rows, err := executor.Query("SELECT id, name FROM users ORDER BY name")
+    rows, err := executor.QueryContext(ctx, "SELECT id, name FROM users ORDER BY name")
     if err != nil {
         return nil, fmt.Errorf("failed to query users: %w", err)
     }
@@ -169,7 +173,7 @@ func directExample() {
 
 func getUserCount(ctx dbx.Context) (int, error) {
     var count int
-    err := ctx.Executor().QueryRow("SELECT COUNT(*) FROM users").Scan(&count)
+    err := ctx.Executor().QueryRowContext(ctx, "SELECT COUNT(*) FROM users").Scan(&count)
     return count, err
 }
 ```
@@ -201,14 +205,14 @@ func main() {
 ```
 
 ### Context Helper Functions
-- `dbx.Is(ctx)` - Check if context contains dbx context
-- `dbx.As(ctx)` - Extract dbx context with ok flag
-- `dbx.FromContext(ctx)` - Extract dbx context (returns nil if not found)
+- `dbx.Is(ctx)` - Check whether the context directly implements `dbx.Context`
+- `dbx.As(ctx)` - Type-assert a direct `dbx.Context` with an ok flag
+- `dbx.FromContext(ctx)` - Extract a direct or embedded dbx context (returns nil if not found)
 - `dbx.WithContext(ctx, dbxCtx)` - Embed dbx context into regular context
 
 ## Transaction Management
 
-`dbx` provides powerful transaction management with automatic lifecycle handling and support for nested operations.
+`dbx` provides transaction management with automatic lifecycle handling and transaction reuse for nested operations.
 
 ### Basic Transactions
 
@@ -216,20 +220,18 @@ func main() {
 func createUserWithProfile(ctx context.Context, db dbx.Database, userName, email string) error {
     return dbx.Transaction(ctx, db, func(txCtx dbx.Context) error {
         // Insert user
-        result, err := txCtx.Executor().Exec(
-            "INSERT INTO users (name) VALUES ($1) RETURNING id", userName)
-        if err != nil {
-            return fmt.Errorf("failed to insert user: %w", err)
-        }
-        
         var userID int64
-        userID, err = result.LastInsertId()
+        err := txCtx.Executor().QueryRowContext(
+            txCtx,
+            "INSERT INTO users (name) VALUES ($1) RETURNING id",
+            userName,
+        ).Scan(&userID)
         if err != nil {
             return fmt.Errorf("failed to get user ID: %w", err)
         }
         
         // Insert profile
-        _, err = txCtx.Executor().Exec(
+        _, err = txCtx.Executor().ExecContext(txCtx,
             "INSERT INTO profiles (user_id, email) VALUES ($1, $2)", userID, email)
         if err != nil {
             return fmt.Errorf("failed to insert profile: %w", err)
@@ -272,13 +274,13 @@ Use `TransactionWithResult` when you need to return values from transactions:
 ```go
 func createUserAndGetID(ctx context.Context, db dbx.Database, name string) (int64, error) {
     return dbx.TransactionWithResult(ctx, db, func(txCtx dbx.Context) (int64, error) {
-        result, err := txCtx.Executor().Exec(
-            "INSERT INTO users (name) VALUES ($1)", name)
-        if err != nil {
-            return 0, err
-        }
-        
-        return result.LastInsertId()
+        var userID int64
+        err := txCtx.Executor().QueryRowContext(
+            txCtx,
+            "INSERT INTO users (name) VALUES ($1) RETURNING id",
+            name,
+        ).Scan(&userID)
+        return userID, err
     })
 }
 ```
@@ -287,7 +289,7 @@ func createUserAndGetID(ctx context.Context, db dbx.Database, name string) (int6
 
 ### Transaction Options
 
-Control transaction behavior with options:
+Control transaction behavior with options. Isolation and read-only options apply only when `dbx` creates a transaction; a reused transaction retains the options selected by its owner:
 
 ```go
 // Read-only transaction
@@ -301,21 +303,23 @@ err := dbx.Transaction(ctx, db, func(txCtx dbx.Context) error {
     return performCriticalOperation(txCtx)
 }, dbx.WithIsolationLevel(sql.LevelSerializable))
 
-// Force new transaction (disable reuse)
+// Force an independent transaction (disable reuse; this is not a savepoint)
 err := dbx.Transaction(ctx, db, func(txCtx dbx.Context) error {
     return independentOperation(txCtx)
 }, dbx.WithNewTransaction())
 ```
 
+An independent transaction may use another pooled connection and commits separately from the outer transaction. `WithNewTransaction` does not create a database savepoint.
+
 ### Error Handling Patterns
 
-`dbx` automatically handles transaction rollback on errors:
+`dbx` automatically handles transaction rollback on errors and panics. An operation error is returned unchanged when rollback succeeds; if rollback also fails, the returned error contains both failures:
 
 ```go
 func transferFunds(ctx context.Context, db dbx.Database, fromID, toID int, amount decimal.Decimal) error {
     return dbx.Transaction(ctx, db, func(txCtx dbx.Context) error {
         // Debit source account
-        result, err := txCtx.Executor().Exec(
+        result, err := txCtx.Executor().ExecContext(txCtx,
             "UPDATE accounts SET balance = balance - $1 WHERE id = $2 AND balance >= $1", 
             amount, fromID)
         if err != nil {
@@ -331,7 +335,7 @@ func transferFunds(ctx context.Context, db dbx.Database, fromID, toID int, amoun
         }
         
         // Credit destination account
-        _, err = txCtx.Executor().Exec(
+        _, err = txCtx.Executor().ExecContext(txCtx,
             "UPDATE accounts SET balance = balance + $1 WHERE id = $2", 
             amount, toID)
         if err != nil {
@@ -346,21 +350,30 @@ func transferFunds(ctx context.Context, db dbx.Database, fromID, toID int, amoun
 
 ### Working with Prepared Statements
 
-Since `dbx.Context.Executor()` returns the underlying `sql.DB` or `sql.Tx`, you can use prepared statements:
+`Executor` intentionally exposes only the query methods common to `sql.DB` and `sql.Tx`. Both standard implementations also support prepared statements, which can be accessed through a narrow local capability interface without expanding `dbx.Executor`:
 
 ```go
+type statementPreparer interface {
+    PrepareContext(context.Context, string) (*sql.Stmt, error)
+}
+
 func batchInsertUsers(ctx dbx.Context, users []User) error {
-    executor := ctx.Executor()
-    
-    // Prepare statement (works with both DB and Tx)
-    stmt, err := executor.Prepare("INSERT INTO users (name, email) VALUES ($1, $2)")
+    preparer, ok := ctx.Executor().(statementPreparer)
+    if !ok {
+        return fmt.Errorf("executor does not support prepared statements")
+    }
+
+    stmt, err := preparer.PrepareContext(
+        ctx,
+        "INSERT INTO users (name, email) VALUES ($1, $2)",
+    )
     if err != nil {
         return err
     }
     defer stmt.Close()
     
     for _, user := range users {
-        if _, err := stmt.Exec(user.Name, user.Email); err != nil {
+        if _, err := stmt.ExecContext(ctx, user.Name, user.Email); err != nil {
             return fmt.Errorf("failed to insert user %s: %w", user.Name, err)
         }
     }
@@ -413,10 +426,10 @@ func TestTransferFunds(t *testing.T) {
     // Setup transaction expectations
     mock.ExpectBegin()
     mock.ExpectExec("UPDATE accounts SET balance").
-        WithArgs(100, 1, 100).
+        WithArgs(sqlmock.AnyArg(), 1).
         WillReturnResult(sqlmock.NewResult(0, 1))
     mock.ExpectExec("UPDATE accounts SET balance").
-        WithArgs(100, 2).
+        WithArgs(sqlmock.AnyArg(), 2).
         WillReturnResult(sqlmock.NewResult(0, 1))
     mock.ExpectCommit()
     
@@ -432,21 +445,21 @@ func TestTransferFunds(t *testing.T) {
 
 ### Core Functions
 
-- `dbx.New(db *sql.DB) Database` - Creates a new dbx Database wrapper
-- `dbx.Transaction(ctx context.Context, db Database, op Operation, opts ...Option) error` - Executes operation in transaction
-- `dbx.TransactionWithResult[T](ctx context.Context, db Database, op OperationWithResult[T], opts ...Option) (T, error)` - Executes operation in transaction with return value
+- `dbx.New(db *sql.DB) DatabaseWithContext` - Creates a new dbx database wrapper with context creation
+- `dbx.Transaction(ctx context.Context, beginner Beginner, op Operation, opts ...Option) error` - Executes an operation in a transaction
+- `dbx.TransactionWithResult[T](ctx context.Context, beginner Beginner, op OperationWithResult[T], opts ...Option) (T, error)` - Executes a transaction and returns a typed result
 
 ### Context Functions
 
 - `dbx.FromContext(ctx context.Context) Context` - Extract dbx context from context
 - `dbx.WithContext(ctx context.Context, dbxCtx Context) context.Context` - Embed dbx context
-- `dbx.Is(ctx context.Context) bool` - Check if context contains dbx context
-- `dbx.As(ctx context.Context) (Context, bool)` - Extract dbx context with ok flag
+- `dbx.Is(ctx context.Context) bool` - Check whether the context directly implements `dbx.Context`
+- `dbx.As(ctx context.Context) (Context, bool)` - Type-assert a direct `dbx.Context`
 
 ### Transaction Options
 
 - `dbx.WithIsolationLevel(level sql.IsolationLevel)` - Set transaction isolation level
 - `dbx.WithReadOnly(readOnly bool)` - Set read-only flag
-- `dbx.WithNewTransaction()` - Force creation of new transaction (disable reuse)
+- `dbx.WithNewTransaction()` - Force creation of an independent transaction (disable reuse)
 
-For complete API documentation, see [GoDoc](https://godoc.org/github.com/ziflex/dbx).
+For complete API documentation, see [Go Reference](https://pkg.go.dev/github.com/ziflex/dbx).

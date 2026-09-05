@@ -3,232 +3,179 @@ package dbx_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"github.com/ziflex/dbx"
 )
 
 func TestTransactionOptions(t *testing.T) {
-	t.Run("WithIsolationLevel should set isolation level", func(t *testing.T) {
-		mockDB, mock, err := sqlmock.New()
-		require.NoError(t, err)
-		defer mockDB.Close()
-
-		mock.ExpectBegin().WillReturnError(nil) // Default expectation
-		mock.ExpectExec("SELECT 1").WillReturnResult(sqlmock.NewResult(1, 1))
-		mock.ExpectCommit()
-
-		db := dbx.New(mockDB)
-		ctx := context.Background()
-
-		err = dbx.Transaction(ctx, db, func(c dbx.Context) error {
-			_, e := c.Executor().Exec("SELECT 1")
-			return e
-		}, dbx.WithIsolationLevel(sql.LevelReadCommitted))
-
-		assert.NoError(t, err)
-		assert.NoError(t, mock.ExpectationsWereMet())
-	})
-
-	t.Run("WithReadOnly should set read-only flag", func(t *testing.T) {
-		mockDB, mock, err := sqlmock.New()
-		require.NoError(t, err)
-		defer mockDB.Close()
+	t.Run("passes isolation and read-only options to BeginTx", func(t *testing.T) {
+		database, mock := newSQLMock(t)
+		beginner := &beginnerOnly{db: database}
 
 		mock.ExpectBegin()
-		mock.ExpectQuery("SELECT \\* FROM users").WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
 		mock.ExpectCommit()
 
-		db := dbx.New(mockDB)
-		ctx := context.Background()
+		err := dbx.Transaction(
+			context.Background(),
+			beginner,
+			func(dbx.Context) error { return nil },
+			dbx.WithIsolationLevel(sql.LevelSerializable),
+			dbx.WithReadOnly(true),
+		)
 
-		err = dbx.Transaction(ctx, db, func(c dbx.Context) error {
-			_, e := c.Executor().Query("SELECT * FROM users")
-			return e
-		}, dbx.WithReadOnly(true))
-
-		assert.NoError(t, err)
-		assert.NoError(t, mock.ExpectationsWereMet())
+		require.NoError(t, err)
+		assert.Equal(t, 1, beginner.beginTxCalls)
+		assert.Equal(t, sql.LevelSerializable, beginner.lastOptions.Isolation)
+		assert.True(t, beginner.lastOptions.ReadOnly)
 	})
 
-	t.Run("WithNewTransaction should create new transaction even if one exists", func(t *testing.T) {
-		mockDB, mock, err := sqlmock.New()
-		require.NoError(t, err)
-		defer mockDB.Close()
+	t.Run("creates an independent transaction when requested", func(t *testing.T) {
+		database, mock := newSQLMock(t)
+		db := dbx.New(database)
 
-		// Expect two separate transactions
-		mock.ExpectBegin() // First transaction
+		mock.ExpectBegin()
 		mock.ExpectExec("SELECT 1").WillReturnResult(sqlmock.NewResult(1, 1))
-		mock.ExpectBegin() // Second transaction (new one)
+		mock.ExpectBegin()
 		mock.ExpectExec("SELECT 2").WillReturnResult(sqlmock.NewResult(1, 1))
-		mock.ExpectCommit() // Second transaction commit
-		mock.ExpectCommit() // First transaction commit
+		mock.ExpectCommit()
+		mock.ExpectCommit()
 
-		db := dbx.New(mockDB)
-		ctx := context.Background()
+		err := dbx.Transaction(context.Background(), db, func(outer dbx.Context) error {
+			if _, err := outer.Executor().Exec("SELECT 1"); err != nil {
+				return err
+			}
 
-		err = dbx.Transaction(ctx, db, func(c1 dbx.Context) error {
-			c1.Executor().Exec("SELECT 1")
+			return dbx.Transaction(outer, db, func(inner dbx.Context) error {
+				assert.NotEqual(t, outer.Executor(), inner.Executor())
 
-			// This should create a NEW transaction instead of reusing
-			return dbx.Transaction(c1, db, func(c2 dbx.Context) error {
-				c2.Executor().Exec("SELECT 2")
-				return nil
+				_, err := inner.Executor().Exec("SELECT 2")
+
+				return err
 			}, dbx.WithNewTransaction())
 		})
 
-		assert.NoError(t, err)
-		assert.NoError(t, mock.ExpectationsWereMet())
-	})
-
-	t.Run("multiple options should work together", func(t *testing.T) {
-		mockDB, mock, err := sqlmock.New()
 		require.NoError(t, err)
-		defer mockDB.Close()
-
-		mock.ExpectBegin()
-		mock.ExpectQuery("SELECT \\* FROM users").WillReturnRows(sqlmock.NewRows([]string{"id"}))
-		mock.ExpectCommit()
-
-		db := dbx.New(mockDB)
-		ctx := context.Background()
-
-		err = dbx.Transaction(ctx, db, func(c dbx.Context) error {
-			_, e := c.Executor().Query("SELECT * FROM users")
-			return e
-		}, dbx.WithIsolationLevel(sql.LevelSerializable), dbx.WithReadOnly(true))
-
-		assert.NoError(t, err)
-		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 }
 
 func TestTransactionWithResult(t *testing.T) {
-	t.Run("should return result on success", func(t *testing.T) {
-		mockDB, mock, err := sqlmock.New()
-		require.NoError(t, err)
-		defer mockDB.Close()
+	t.Run("returns the operation result on success", func(t *testing.T) {
+		database, mock := newSQLMock(t)
+		db := dbx.New(database)
+		rows := sqlmock.NewRows([]string{testCountColumn}).AddRow(5)
 
-		rows := sqlmock.NewRows([]string{"count"}).AddRow(5)
 		mock.ExpectBegin()
 		mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM users").WillReturnRows(rows)
 		mock.ExpectCommit()
 
-		db := dbx.New(mockDB)
-		ctx := context.Background()
-
-		count, err := dbx.TransactionWithResult(ctx, db, func(c dbx.Context) (int, error) {
+		count, err := dbx.TransactionWithResult(context.Background(), db, func(ctx dbx.Context) (int, error) {
 			var count int
-			err := c.Executor().QueryRow("SELECT COUNT(*) FROM users").Scan(&count)
+			err := ctx.Executor().QueryRow("SELECT COUNT(*) FROM users").Scan(&count)
+
 			return count, err
 		})
 
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assert.Equal(t, 5, count)
-		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 
-	t.Run("should return zero value on error", func(t *testing.T) {
-		mockDB, mock, err := sqlmock.New()
-		require.NoError(t, err)
-		defer mockDB.Close()
+	t.Run("returns the zero value on an operation error", func(t *testing.T) {
+		database, mock := newSQLMock(t)
+		db := dbx.New(database)
+		operationErr := errors.New("query users")
 
-		testErr := assert.AnError
 		mock.ExpectBegin()
-		mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM users").WillReturnError(testErr)
+		mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM users").WillReturnError(operationErr)
 		mock.ExpectRollback()
 
-		db := dbx.New(mockDB)
-		ctx := context.Background()
-
-		count, err := dbx.TransactionWithResult(ctx, db, func(c dbx.Context) (int, error) {
+		count, err := dbx.TransactionWithResult(context.Background(), db, func(ctx dbx.Context) (int, error) {
 			var count int
-			err := c.Executor().QueryRow("SELECT COUNT(*) FROM users").Scan(&count)
+			err := ctx.Executor().QueryRow("SELECT COUNT(*) FROM users").Scan(&count)
+
 			return count, err
 		})
 
-		assert.Error(t, err)
-		assert.Equal(t, 0, count) // zero value for int
-		assert.NoError(t, mock.ExpectationsWereMet())
+		require.ErrorIs(t, err, operationErr)
+		assert.Zero(t, count)
 	})
 
-	t.Run("should work with custom types", func(t *testing.T) {
-		type User struct {
+	t.Run("returns zero and leaves a reused transaction usable after an operation error", func(t *testing.T) {
+		database, mock := newSQLMock(t)
+		db := dbx.New(database)
+		unusedBeginner := &beginnerOnly{db: database}
+		operationErr := errors.New("nested operation error")
+
+		mock.ExpectBegin()
+		mock.ExpectExec("SELECT 1").WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectCommit()
+
+		err := dbx.Transaction(context.Background(), db, func(outer dbx.Context) error {
+			result, err := dbx.TransactionWithResult(outer, unusedBeginner, func(inner dbx.Context) (string, error) {
+				assert.Same(t, outer, inner)
+
+				return "discarded", operationErr
+			})
+
+			require.ErrorIs(t, err, operationErr)
+			assert.Equal(t, operationErr, err)
+			assert.Empty(t, result)
+
+			_, err = outer.Executor().ExecContext(outer, "SELECT 1")
+
+			return err
+		})
+
+		require.NoError(t, err)
+		assert.Zero(t, unusedBeginner.beginTxCalls)
+	})
+
+	t.Run("supports custom result types", func(t *testing.T) {
+		type user struct {
 			ID   int
 			Name string
 		}
 
-		mockDB, mock, err := sqlmock.New()
-		require.NoError(t, err)
-		defer mockDB.Close()
+		database, mock := newSQLMock(t)
+		db := dbx.New(database)
+		rows := sqlmock.NewRows([]string{testIDColumn, testNameColumn}).AddRow(1, "Alice")
 
-		rows := sqlmock.NewRows([]string{"id", "name"}).AddRow(1, "Alice")
 		mock.ExpectBegin()
 		mock.ExpectQuery("SELECT id, name FROM users WHERE id").
 			WithArgs(1).
 			WillReturnRows(rows)
 		mock.ExpectCommit()
 
-		db := dbx.New(mockDB)
-		ctx := context.Background()
+		result, err := dbx.TransactionWithResult(context.Background(), db, func(ctx dbx.Context) (user, error) {
+			var result user
+			err := ctx.Executor().QueryRow("SELECT id, name FROM users WHERE id = ?", 1).
+				Scan(&result.ID, &result.Name)
 
-		user, err := dbx.TransactionWithResult(ctx, db, func(c dbx.Context) (User, error) {
-			var user User
-			err := c.Executor().QueryRow("SELECT id, name FROM users WHERE id = ?", 1).
-				Scan(&user.ID, &user.Name)
-			return user, err
+			return result, err
 		})
 
-		assert.NoError(t, err)
-		assert.Equal(t, User{ID: 1, Name: "Alice"}, user)
-		assert.NoError(t, mock.ExpectationsWereMet())
+		require.NoError(t, err)
+		assert.Equal(t, user{ID: 1, Name: "Alice"}, result)
 	})
 
-	t.Run("should handle begin error", func(t *testing.T) {
-		mockDB, mock, err := sqlmock.New()
-		require.NoError(t, err)
-		defer mockDB.Close()
+	t.Run("returns the zero value on a commit error", func(t *testing.T) {
+		database, mock := newSQLMock(t)
+		db := dbx.New(database)
+		commitErr := errors.New("commit transaction")
 
-		testErr := assert.AnError
-		mock.ExpectBegin().WillReturnError(testErr)
-
-		db := dbx.New(mockDB)
-		ctx := context.Background()
-
-		result, err := dbx.TransactionWithResult(ctx, db, func(c dbx.Context) (string, error) {
-			return "should not reach here", nil
-		})
-
-		assert.Error(t, err)
-		assert.Equal(t, testErr, err)
-		assert.Equal(t, "", result) // zero value for string
-		assert.NoError(t, mock.ExpectationsWereMet())
-	})
-
-	t.Run("should handle commit error", func(t *testing.T) {
-		mockDB, mock, err := sqlmock.New()
-		require.NoError(t, err)
-		defer mockDB.Close()
-
-		testErr := assert.AnError
 		mock.ExpectBegin()
-		mock.ExpectExec("SELECT 1").WillReturnResult(sqlmock.NewResult(1, 1))
-		mock.ExpectCommit().WillReturnError(testErr)
+		mock.ExpectCommit().WillReturnError(commitErr)
 
-		db := dbx.New(mockDB)
-		ctx := context.Background()
-
-		result, err := dbx.TransactionWithResult(ctx, db, func(c dbx.Context) (string, error) {
-			c.Executor().Exec("SELECT 1")
-			return "success", nil
+		result, err := dbx.TransactionWithResult(context.Background(), db, func(dbx.Context) (string, error) {
+			return "result", nil
 		})
 
-		assert.Error(t, err)
-		assert.Equal(t, testErr, err)
-		assert.Equal(t, "", result) // zero value for string
-		assert.NoError(t, mock.ExpectationsWereMet())
+		require.ErrorIs(t, err, commitErr)
+		assert.Empty(t, result)
 	})
 }

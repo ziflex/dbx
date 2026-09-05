@@ -46,7 +46,8 @@ func newOptions(setters []Option) *options {
 
 // WithIsolationLevel sets the isolation level for the transaction.
 // This option configures how the transaction isolates its operations
-// from other concurrent transactions.
+// from other concurrent transactions. The option is applied only when a new
+// transaction is created; it cannot change an existing reused transaction.
 //
 // Parameters:
 //   - level: The SQL isolation level (e.g., sql.LevelReadCommitted, sql.LevelSerializable)
@@ -67,7 +68,8 @@ func WithIsolationLevel(level sql.IsolationLevel) Option {
 
 // WithReadOnly sets the read-only flag for the transaction.
 // Read-only transactions can provide performance benefits and prevent
-// accidental data modifications.
+// accidental data modifications. The option is applied only when a new
+// transaction is created; it cannot change an existing reused transaction.
 //
 // Parameters:
 //   - readOnly: true to make the transaction read-only, false for read-write
@@ -87,13 +89,13 @@ func WithReadOnly(readOnly bool) Option {
 	}
 }
 
-// WithNewTransaction forces the creation of a new transaction even if there
-// is an existing transaction in the context. This is useful when you need
-// a separate transaction scope that can be committed or rolled back
-// independently of the outer transaction.
+// WithNewTransaction forces the creation of an independent transaction even if
+// there is an existing transaction in the context. The new transaction is not a
+// nested transaction or savepoint: it can be committed or rolled back independently
+// and may use a different connection from the database pool.
 //
 // By default, dbx reuses existing transactions found in the context to avoid
-// nested transaction issues. Use this option when you explicitly need a new
+// nested transaction issues. Use this option when you explicitly need an independent
 // transaction boundary.
 //
 // Returns:
